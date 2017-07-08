@@ -1,0 +1,145 @@
+---
+title: "Two_Sigma EDA"
+author: "Xiao Ma"
+date: "July 8, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(lubridate)
+library(printr)
+```
+
+```{r echo = F}
+two_sig_raw = read.csv("C:/Users/marsh/Desktop/Kaggle/TS/two_sig.csv",stringsAsFactors = F)
+```
+
+##Descripion
+
+This document aims at:
+
+* examining potential high influence points in the Two Sigma data set
+* Preprocess the data, prepare input columns. 
+
+##EDA and pre-processing
+
+###Read in data and exclude unnecessary columns convert columns to disired types
+```{r}
+#Removing na values
+str(two_sig_raw)
+two_sig = na.omit(two_sig_raw)
+str(two_sig)
+
+#Extract necessary columns and convert them into correct data types
+data1 = data.frame(bathrooms = as.numeric(two_sig$bathrooms),bedrooms = as.numeric(two_sig$bedrooms),created = as.Date(two_sig$created),features = as.character(two_sig$features), latitude = as.numeric(two_sig$latitude), longitude = as.numeric(two_sig$longitude),price = as.numeric(two_sig$price),response = as.integer(as.factor(two_sig$interest_level)))
+data1['generalKey'] = seq(1:nrow(data1))
+data1$features = as.character(data1$features)
+str(data1)
+head(data1)
+```
+
+###create new column "day since created"
+
+```{r}
+target_date = as.Date('2017-07-08')
+data1$day_since_created = target_date - data1$created
+data1$day_since_created = as.integer(data1$day_since_created)
+str(data1)
+
+#remove the column created 
+data2 = data1[,-3]
+```
+
+###longitude and latitude
+
+
+```{r}
+library(cluster)
+pos = data.frame(lat = data2$latitude, log = data2$longitude)
+```
+
+```{r}
+#k-means
+#First try to find the best number of clusters by looking at with cluster sum of squares:
+totalWithinss<-c()
+for(i in 1:20){
+  totalWithinss<-c(totalWithinss,kmeans(pos,i+1,iter.max = 25,nstart = 1)$tot.withinss)
+}
+plot(seq(1:20),totalWithinss,xlab="K",type="b")
+
+#Will set k = 8
+
+kmeansPos = kmeans(pos,8,iter.max = 25,nstart = 1)
+kmeansPos$size
+data2$Position_Label = kmeansPos$cluster
+data2$Position_Label = as.factor(data2$Position_Label)
+
+#Remove the log and lat data
+data3 = data2[,-c(4,5)]
+str(data2)
+```
+
+###Features
+
+Transforming feature rows into columns
+
+```{r}
+library(tm)
+library(NLP)
+library(openNLP)
+
+text.source = VectorSource(data3$features)
+text.corpus = VCorpus(text.source)
+
+clean_corpus <- function(corpus){
+  all_stops <- c(stopwords("en"))
+  corpus = tm_map(corpus, content_transformer(tolower))
+  #corpus = tm_map(corpus, content_transformer(replace_contraction))
+  corpus = tm_map(corpus, removeNumbers)
+  corpus = tm_map(corpus, stripWhitespace)
+  corpus = tm_map(corpus, removeWords,c(all_stops))
+  corpus = tm_map(corpus, removePunctuation)
+  return(corpus)
+}
+
+cleaned.corpus = clean_corpus(text.corpus)
+
+#Uni grams only
+DTM = DocumentTermMatrix(cleaned.corpus)
+DTM_f = removeSparseTerms(DTM,0.7)
+DTM_f = as.matrix(DTM_f)
+dim(DTM_f)
+
+#Uni or bi grams
+library(RWeka)
+tokenizer = function(x){
+  NGramTokenizer(x,Weka_control(min = 2, max = 2))
+}
+
+DTM_multi = DocumentTermMatrix(cleaned.corpus,control = list(tokenize = tokenizer))
+DTM_multi_f =  removeSparseTerms(DTM_multi,0.8)
+DTM_multi_f = as.matrix(DTM_multi_f)
+
+#Here for the time being hand picked key features: dishwasher, doorman, elevator,hardwood, laundry
+#fitness center, cats allowed,allowed cats, dogs allowed
+
+newcols = data.frame(cbind(DTM_f[,c(4,6,7,10,11)],DTM_multi_f[,c(1,2,4,7)]))
+
+data4 = data3[,-3]
+data4 = cbind(data4,newcols)
+head(data4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
